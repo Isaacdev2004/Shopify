@@ -138,6 +138,23 @@ async function createCheckout(checkoutData) {
 }
 
 /**
+ * Root endpoint - API information
+ */
+app.get('/', (req, res) => {
+  res.json({
+    service: 'SumUp Shopify Payment Integration',
+    status: 'running',
+    version: '1.0.0',
+    endpoints: {
+      health: 'GET /health',
+      createCheckout: 'POST /create-checkout'
+    },
+    documentation: 'See README.md for API usage',
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
  * Health check endpoint
  */
 app.get('/health', (req, res) => {
