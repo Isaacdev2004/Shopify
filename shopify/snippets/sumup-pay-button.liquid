@@ -27,6 +27,7 @@
     type="button" 
     class="{{ button_class }} btn btn--primary" 
     id="sumup-pay-button"
+    onclick="if(window.createSumUpCheckout) { window.createSumUpCheckout(); } else { console.error('SumUp: Function not ready yet'); }"
     data-backend-url="{{ backend_url }}"
     data-cart-total="{{ cart_total_cents }}"
     data-currency="{{ cart.currency.iso_code }}"
@@ -109,9 +110,13 @@
   
   // Get Shopify cart data
   function getCartData() {
+    const button = document.getElementById('sumup-pay-button');
+    const cartTotalCents = button ? parseFloat(button.dataset.cartTotal) || 0 : 0;
+    
+    // Shopify cart.total_price is already in cents
     return {
-      total: parseFloat(document.getElementById('sumup-pay-button').dataset.cartTotal) || 0,
-      currency: document.getElementById('sumup-pay-button').dataset.currency || 'EUR',
+      total: cartTotalCents,
+      currency: button ? (button.dataset.currency || 'EUR') : 'EUR',
       items: {{ cart.items | json }},
       total_price: {{ cart.total_price | json }}
     };
@@ -183,31 +188,42 @@
     }
   }
   
-  // Create SumUp checkout
-  async function createSumUpCheckout() {
+  // Create SumUp checkout (expose globally for debugging)
+  window.createSumUpCheckout = async function createSumUpCheckout() {
+    console.log('SumUp: createSumUpCheckout called');
+    
     const button = document.getElementById('sumup-pay-button');
     if (!button) {
+      console.error('SumUp: Button not found!');
       showError('Payment button not found');
       return;
     }
     
+    console.log('SumUp: Button found, backend URL:', button.dataset.backendUrl);
+    
     const backendUrl = button.dataset.backendUrl;
     if (!backendUrl || backendUrl === 'https://your-backend-url.com') {
+      console.error('SumUp: Backend URL not configured');
       showError('Backend URL not configured. Please set the backend URL in theme settings or update the snippet.');
       return;
     }
     
     const cartData = getCartData();
+    console.log('SumUp: Cart data:', cartData);
     
     // Validate cart has items
     if (cartData.total <= 0) {
+      console.error('SumUp: Cart total is 0 or empty');
       showError('Your cart is empty. Please add items before proceeding to payment.');
       return;
     }
     
     // Validate amount (must be at least 1 EUR cent)
     const amountInCents = Math.round(cartData.total);
+    console.log('SumUp: Amount in cents:', amountInCents);
+    
     if (amountInCents < 1) {
+      console.error('SumUp: Amount too small');
       showError('Invalid cart total. Minimum payment amount is 0.01 EUR.');
       return;
     }
@@ -262,11 +278,33 @@
   
   // Initialize when DOM is ready
   function init() {
+    console.log('SumUp: Initializing payment button...');
     const button = document.getElementById('sumup-pay-button');
     if (button) {
-      button.addEventListener('click', createSumUpCheckout);
+      console.log('SumUp: Button found, attaching click handler');
+      button.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('SumUp: Button clicked!');
+        createSumUpCheckout();
+      });
+      console.log('SumUp: Click handler attached successfully');
     } else {
-      console.error('SumUp payment button not found');
+      console.error('SumUp: Payment button not found! Looking for #sumup-pay-button');
+      // Try again after a short delay
+      setTimeout(function() {
+        const retryButton = document.getElementById('sumup-pay-button');
+        if (retryButton) {
+          console.log('SumUp: Button found on retry');
+          retryButton.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            createSumUpCheckout();
+          });
+        } else {
+          console.error('SumUp: Button still not found after retry');
+        }
+      }, 500);
     }
   }
   
@@ -274,8 +312,11 @@
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
-    init();
+    // DOM already ready, but wait a bit for dynamic content
+    setTimeout(init, 100);
   }
+  
+  console.log('SumUp: Script loaded');
 })();
 </script>
 
