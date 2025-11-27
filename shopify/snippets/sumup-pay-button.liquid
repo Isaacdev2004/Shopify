@@ -27,7 +27,6 @@
     type="button" 
     class="{{ button_class }} btn btn--primary" 
     id="sumup-pay-button"
-    onclick="if(window.createSumUpCheckout) { window.createSumUpCheckout(); } else { console.error('SumUp: Function not ready yet'); }"
     data-backend-url="{{ backend_url }}"
     data-cart-total="{{ cart_total_cents }}"
     data-currency="{{ cart.currency.iso_code }}"
@@ -110,13 +109,9 @@
   
   // Get Shopify cart data
   function getCartData() {
-    const button = document.getElementById('sumup-pay-button');
-    const cartTotalCents = button ? parseFloat(button.dataset.cartTotal) || 0 : 0;
-    
-    // Shopify cart.total_price is already in cents
     return {
-      total: cartTotalCents,
-      currency: button ? (button.dataset.currency || 'EUR') : 'EUR',
+      total: parseFloat(document.getElementById('sumup-pay-button').dataset.cartTotal) || 0,
+      currency: document.getElementById('sumup-pay-button').dataset.currency || 'EUR',
       items: {{ cart.items | json }},
       total_price: {{ cart.total_price | json }}
     };
@@ -190,40 +185,29 @@
   
   // Create SumUp checkout (expose globally for debugging)
   window.createSumUpCheckout = async function createSumUpCheckout() {
-    console.log('SumUp: createSumUpCheckout called');
-    
     const button = document.getElementById('sumup-pay-button');
     if (!button) {
-      console.error('SumUp: Button not found!');
       showError('Payment button not found');
       return;
     }
     
-    console.log('SumUp: Button found, backend URL:', button.dataset.backendUrl);
-    
     const backendUrl = button.dataset.backendUrl;
     if (!backendUrl || backendUrl === 'https://your-backend-url.com') {
-      console.error('SumUp: Backend URL not configured');
       showError('Backend URL not configured. Please set the backend URL in theme settings or update the snippet.');
       return;
     }
     
     const cartData = getCartData();
-    console.log('SumUp: Cart data:', cartData);
     
     // Validate cart has items
     if (cartData.total <= 0) {
-      console.error('SumUp: Cart total is 0 or empty');
       showError('Your cart is empty. Please add items before proceeding to payment.');
       return;
     }
     
     // Validate amount (must be at least 1 EUR cent)
     const amountInCents = Math.round(cartData.total);
-    console.log('SumUp: Amount in cents:', amountInCents);
-    
     if (amountInCents < 1) {
-      console.error('SumUp: Amount too small');
       showError('Invalid cart total. Minimum payment amount is 0.01 EUR.');
       return;
     }
@@ -271,7 +255,17 @@
       
     } catch (error) {
       console.error('Error creating checkout:', error);
-      showError(error.message || 'Failed to create payment session. Please try again.');
+      
+      // Better error messages for common issues
+      let errorMessage = error.message || 'Failed to create payment session. Please try again.';
+      
+      if (errorMessage.includes('Unknown client')) {
+        errorMessage = 'Payment service configuration error. Please contact store support. (Error: API credentials need activation)';
+      } else if (errorMessage.includes('Failed to obtain SumUp token')) {
+        errorMessage = 'Payment service temporarily unavailable. Please try again in a moment or use standard checkout.';
+      }
+      
+      showError(errorMessage);
       setButtonLoading(false);
     }
   }
@@ -282,12 +276,52 @@
     const button = document.getElementById('sumup-pay-button');
     if (button) {
       console.log('SumUp: Button found, attaching click handler');
+      
+      // Prevent any form submission when SumUp button is clicked
       button.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
+        e.stopImmediatePropagation();
         console.log('SumUp: Button clicked!');
+        
+        // Mark that SumUp button was clicked
+        button.dataset.sumupClicked = 'true';
+        
+        // Find and prevent form submission
+        let form = button.closest('form');
+        if (form) {
+          // Prevent form submission
+          const preventSubmit = function(submitEvent) {
+            if (button.dataset.sumupClicked === 'true') {
+              submitEvent.preventDefault();
+              submitEvent.stopPropagation();
+              submitEvent.stopImmediatePropagation();
+              return false;
+            }
+          };
+          form.addEventListener('submit', preventSubmit, true);
+        }
+        
         createSumUpCheckout();
-      });
+        return false;
+      }, true); // Use capture phase to ensure we catch it first
+      
+      // Also prevent form submission on the form itself if button is inside a form
+      let form = button.closest('form');
+      if (form) {
+        // Store original submit handler
+        const originalSubmit = form.onsubmit;
+        form.addEventListener('submit', function(e) {
+          // Only prevent if SumUp button was clicked
+          if (button.dataset.sumupClicked === 'true') {
+            e.preventDefault();
+            e.stopPropagation();
+            button.dataset.sumupClicked = 'false';
+            return false;
+          }
+        }, true);
+      }
+      
       console.log('SumUp: Click handler attached successfully');
     } else {
       console.error('SumUp: Payment button not found! Looking for #sumup-pay-button');
@@ -299,8 +333,11 @@
           retryButton.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
+            retryButton.dataset.sumupClicked = 'true';
             createSumUpCheckout();
-          });
+            return false;
+          }, true);
         } else {
           console.error('SumUp: Button still not found after retry');
         }
