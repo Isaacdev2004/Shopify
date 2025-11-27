@@ -15,7 +15,7 @@
 {% endcomment %}
 
 {%- liquid
-  assign backend_url = backend_url | default: settings.sumup_backend_url | default: 'https://your-backend-url.com'
+  assign backend_url = backend_url | default: settings.sumup_backend_url | default: 'https://sumup-shopify-backend.onrender.com'
   assign cart_total = cart.total_price
   assign cart_total_cents = cart_total | divided_by: 1.0
   assign button_text = button_text | default: 'Pay with SumUp'
@@ -193,7 +193,7 @@
     
     const backendUrl = button.dataset.backendUrl;
     if (!backendUrl || backendUrl === 'https://your-backend-url.com') {
-      showError('Backend URL not configured. Please set the backend URL in theme settings.');
+      showError('Backend URL not configured. Please set the backend URL in theme settings or update the snippet.');
       return;
     }
     
