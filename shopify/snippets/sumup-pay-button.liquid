@@ -1,0 +1,281 @@
+{% comment %}
+  SumUp Payment Button Snippet
+  
+  This snippet creates a "Pay with SumUp" button that:
+  1. Reads the cart total from Shopify
+  2. Calls the backend API to create a SumUp checkout
+  3. Redirects the customer to SumUp's hosted payment page
+  
+  Usage:
+  {% render 'sumup-pay-button', backend_url: 'https://your-backend-url.com' %}
+  
+  Or inline:
+  {% render 'sumup-pay-button' %}
+  (will use the backend_url from settings or default)
+{% endcomment %}
+
+{%- liquid
+  assign backend_url = backend_url | default: settings.sumup_backend_url | default: 'https://your-backend-url.com'
+  assign cart_total = cart.total_price
+  assign cart_total_cents = cart_total | divided_by: 1.0
+  assign button_text = button_text | default: 'Pay with SumUp'
+  assign button_class = button_class | default: 'sumup-pay-button'
+-%}
+
+<div class="sumup-payment-container" id="sumup-payment-container">
+  <button 
+    type="button" 
+    class="{{ button_class }} btn btn--primary" 
+    id="sumup-pay-button"
+    data-backend-url="{{ backend_url }}"
+    data-cart-total="{{ cart_total_cents }}"
+    data-currency="{{ cart.currency.iso_code }}"
+    {% if cart.items.size == 0 %}disabled{% endif %}
+  >
+    <span class="sumup-button-text">{{ button_text }}</span>
+    <span class="sumup-button-loading" style="display: none;">
+      <svg class="spinner" width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="43.98" stroke-dashoffset="10.99">
+          <animate attributeName="stroke-dashoffset" values="43.98;0;43.98" dur="1s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+      Processing...
+    </span>
+  </button>
+  
+  <div class="sumup-error-message" id="sumup-error-message" style="display: none;"></div>
+</div>
+
+<style>
+  .sumup-payment-container {
+    margin: 20px 0;
+  }
+  
+  .sumup-pay-button {
+    width: 100%;
+    max-width: 400px;
+    padding: 14px 28px;
+    font-size: 16px;
+    font-weight: 600;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  
+  .sumup-pay-button:hover:not(:disabled) {
+    opacity: 0.9;
+    transform: translateY(-1px);
+  }
+  
+  .sumup-pay-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
+  .sumup-button-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .sumup-button-loading .spinner {
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  .sumup-error-message {
+    margin-top: 12px;
+    padding: 12px;
+    background-color: #fee;
+    border: 1px solid #fcc;
+    border-radius: 4px;
+    color: #c33;
+    font-size: 14px;
+  }
+</style>
+
+<script>
+(function() {
+  'use strict';
+  
+  // Get Shopify cart data
+  function getCartData() {
+    return {
+      total: parseFloat(document.getElementById('sumup-pay-button').dataset.cartTotal) || 0,
+      currency: document.getElementById('sumup-pay-button').dataset.currency || 'EUR',
+      items: {{ cart.items | json }},
+      total_price: {{ cart.total_price | json }}
+    };
+  }
+  
+  // Get Shopify order ID if available (from checkout or order page)
+  function getOrderId() {
+    // Try to get from URL if on thank you page
+    const urlParams = new URLSearchParams(window.location.search);
+    const orderId = urlParams.get('order_id') || 
+                    urlParams.get('order') ||
+                    (window.Shopify && window.Shopify.checkout && window.Shopify.checkout.order_id);
+    
+    return orderId || null;
+  }
+  
+  // Get return URL (Shopify thank you page)
+  function getReturnUrl() {
+    // Try multiple methods to get the store URL
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    
+    // If on Shopify checkout, use the thank you page
+    if (window.location.pathname.includes('/checkout')) {
+      return `${protocol}//${hostname}/checkout/thank_you`;
+    }
+    
+    // Otherwise construct from current domain
+    return `${protocol}//${hostname}/checkout/thank_you`;
+  }
+  
+  // Show error message
+  function showError(message) {
+    const errorDiv = document.getElementById('sumup-error-message');
+    if (errorDiv) {
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+      
+      // Hide after 10 seconds
+      setTimeout(() => {
+        errorDiv.style.display = 'none';
+      }, 10000);
+    }
+    console.error('SumUp Error:', message);
+  }
+  
+  // Hide error message
+  function hideError() {
+    const errorDiv = document.getElementById('sumup-error-message');
+    if (errorDiv) {
+      errorDiv.style.display = 'none';
+    }
+  }
+  
+  // Update button state
+  function setButtonLoading(loading) {
+    const button = document.getElementById('sumup-pay-button');
+    const buttonText = button.querySelector('.sumup-button-text');
+    const buttonLoading = button.querySelector('.sumup-button-loading');
+    
+    if (loading) {
+      button.disabled = true;
+      if (buttonText) buttonText.style.display = 'none';
+      if (buttonLoading) buttonLoading.style.display = 'flex';
+    } else {
+      button.disabled = false;
+      if (buttonText) buttonText.style.display = 'inline';
+      if (buttonLoading) buttonLoading.style.display = 'none';
+    }
+  }
+  
+  // Create SumUp checkout
+  async function createSumUpCheckout() {
+    const button = document.getElementById('sumup-pay-button');
+    if (!button) {
+      showError('Payment button not found');
+      return;
+    }
+    
+    const backendUrl = button.dataset.backendUrl;
+    if (!backendUrl || backendUrl === 'https://your-backend-url.com') {
+      showError('Backend URL not configured. Please set the backend URL in theme settings.');
+      return;
+    }
+    
+    const cartData = getCartData();
+    
+    // Validate cart has items
+    if (cartData.total <= 0) {
+      showError('Your cart is empty. Please add items before proceeding to payment.');
+      return;
+    }
+    
+    // Validate amount (must be at least 1 EUR cent)
+    const amountInCents = Math.round(cartData.total);
+    if (amountInCents < 1) {
+      showError('Invalid cart total. Minimum payment amount is 0.01 EUR.');
+      return;
+    }
+    
+    setButtonLoading(true);
+    hideError();
+    
+    try {
+      const orderId = getOrderId();
+      const returnUrl = getReturnUrl();
+      
+      // Prepare request payload
+      const payload = {
+        amount: amountInCents,
+        currency: cartData.currency || 'EUR',
+        description: orderId ? `Shopify Order #${orderId}` : 'Shopify Cart Payment',
+        order_id: orderId,
+        redirect_url: returnUrl
+      };
+      
+      console.log('Creating SumUp checkout:', payload);
+      
+      // Call backend API
+      const response = await fetch(`${backendUrl}/create-checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Server error: ${response.status}`);
+      }
+      
+      if (data.success && data.checkout_url) {
+        console.log('Checkout created, redirecting to:', data.checkout_url);
+        // Redirect to SumUp payment page
+        window.location.href = data.checkout_url;
+      } else {
+        throw new Error(data.error || 'Invalid response from server');
+      }
+      
+    } catch (error) {
+      console.error('Error creating checkout:', error);
+      showError(error.message || 'Failed to create payment session. Please try again.');
+      setButtonLoading(false);
+    }
+  }
+  
+  // Initialize when DOM is ready
+  function init() {
+    const button = document.getElementById('sumup-pay-button');
+    if (button) {
+      button.addEventListener('click', createSumUpCheckout);
+    } else {
+      console.error('SumUp payment button not found');
+    }
+  }
+  
+  // Wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+

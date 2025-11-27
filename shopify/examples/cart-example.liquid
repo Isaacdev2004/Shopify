@@ -1,0 +1,79 @@
+{% comment %}
+  EXAMPLE: How to add SumUp button to cart.liquid template
+  
+  This is an example showing where to place the SumUp payment button
+  in a typical Shopify cart template.
+  
+  DO NOT use this file directly - it's just a reference example.
+  Instead, add the snippet render to your actual cart.liquid file.
+{% endcomment %}
+
+{% comment %} Typical cart template structure {% endcomment %}
+
+<div class="cart">
+  <h1>{{ 'cart.general.title' | t }}</h1>
+  
+  {% if cart.item_count > 0 %}
+    <form action="/cart" method="post" novalidate>
+      
+      {% comment %} Cart items loop {% endcomment %}
+      <div class="cart-items">
+        {% for item in cart.items %}
+          {% comment %} Item display {% endcomment %}
+        {% endfor %}
+      </div>
+      
+      {% comment %} Cart totals {% endcomment %}
+      <div class="cart-totals">
+        <p>Total: {{ cart.total_price | money }}</p>
+      </div>
+      
+      {% comment %}
+        ============================================
+        ADD SUMUP BUTTON HERE (after checkout button)
+        ============================================
+      {% endcomment %}
+      
+      <div class="cart__checkout-wrapper">
+        {% comment %} Standard Shopify checkout button {% endcomment %}
+        <button type="submit" name="checkout" class="cart__checkout btn btn--primary">
+          {{ 'cart.general.checkout' | t }}
+        </button>
+        
+        {% comment %} 
+          SumUp Payment Button
+          Replace 'https://your-backend-url.com' with your actual backend URL
+        {% endcomment %}
+        {% render 'sumup-pay-button', backend_url: 'https://your-backend-url.com' %}
+        
+        {% comment %} Alternative: Use theme settings {% endcomment %}
+        {% comment %}
+        {% render 'sumup-pay-button', backend_url: settings.sumup_backend_url %}
+        {% endcomment %}
+      </div>
+      
+    </form>
+  {% else %}
+    <p>{{ 'cart.general.empty' | t }}</p>
+  {% endif %}
+</div>
+
+{% comment %}
+  STYLING EXAMPLE:
+  
+  You can add custom CSS to style the button container:
+  
+  <style>
+    .cart__checkout-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    
+    .sumup-pay-button {
+      width: 100%;
+    }
+  </style>
+{% endcomment %}
+
