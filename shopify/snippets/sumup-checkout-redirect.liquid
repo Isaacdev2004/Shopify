@@ -162,14 +162,23 @@
   // Create SumUp checkout and redirect
   async function redirectToSumUp(event) {
     if (isProcessing) {
+      console.log('SumUp: Already processing, ignoring click');
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
       return false;
     }
     
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+    // AGGRESSIVELY prevent default behavior
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      event.stopImmediatePropagation();
+    }
     
     isProcessing = true;
+    console.log('SumUp: Processing started, preventing form submission');
     
     const submitButton = findSubmitButton();
     if (submitButton) {
@@ -219,8 +228,15 @@
       
       if (data.success && data.checkout_url) {
         console.log('SumUp: Checkout created, redirecting to:', data.checkout_url);
+        // CRITICAL: Stop all processing and redirect immediately
+        isProcessing = true;
         // Redirect to SumUp payment page
-        window.location.href = data.checkout_url;
+        window.location.replace(data.checkout_url);
+        // Also try href as backup
+        setTimeout(() => {
+          window.location.href = data.checkout_url;
+        }, 100);
+        return false;
       } else {
         throw new Error(data.error || 'Invalid response from server');
       }
@@ -243,8 +259,16 @@
       }
       
       isProcessing = false;
+      
+      // CRITICAL: Prevent any further form submission
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
     }
     
+    // ALWAYS return false to prevent default
     return false;
   }
   
@@ -259,16 +283,53 @@
       if (submitButton) {
         console.log('SumUp: Found submit button, attaching handler');
         
-        // Prevent form submission
+        // Prevent form submission - MULTIPLE METHODS
         const form = submitButton.closest('form');
         if (form) {
-          form.addEventListener('submit', redirectToSumUp, true);
-          console.log('SumUp: Form submit handler attached');
+          // Method 1: Add submit listener with capture
+          form.addEventListener('submit', function(e) {
+            console.log('SumUp: Form submit intercepted!');
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            redirectToSumUp(e);
+            return false;
+          }, true);
+          
+          // Method 2: Override submit function
+          const originalSubmit = form.submit;
+          form.submit = function() {
+            console.log('SumUp: Form.submit() intercepted!');
+            redirectToSumUp(new Event('submit'));
+            return false;
+          };
+          
+          console.log('SumUp: Form submit handler attached (multiple methods)');
         }
         
-        // Also handle button click directly
-        submitButton.addEventListener('click', redirectToSumUp, true);
-        console.log('SumUp: Button click handler attached');
+        // Also handle button click directly - MULTIPLE METHODS
+        submitButton.addEventListener('click', function(e) {
+          console.log('SumUp: Button click intercepted!');
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          redirectToSumUp(e);
+          return false;
+        }, true);
+        
+        // Also use onclick (as backup)
+        const originalOnClick = submitButton.onclick;
+        submitButton.onclick = function(e) {
+          console.log('SumUp: Button onclick intercepted!');
+          if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          redirectToSumUp(e || new Event('click'));
+          return false;
+        };
+        
+        console.log('SumUp: Button click handler attached (multiple methods)');
         
       } else {
         console.warn('SumUp: Submit button not found, retrying...');
@@ -285,6 +346,26 @@
       setTimeout(initCheckout, 100);
     }
   }
+  
+  // CRITICAL: Prevent navigation to thank you page
+  window.addEventListener('beforeunload', function(e) {
+    if (isProcessing) {
+      // Don't allow navigation while processing
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
+  
+  // Also intercept any navigation attempts
+  const originalPushState = history.pushState;
+  history.pushState = function() {
+    if (!isProcessing) {
+      originalPushState.apply(history, arguments);
+    } else {
+      console.log('SumUp: Blocked navigation while processing');
+    }
+  };
   
   // Start
   init();
