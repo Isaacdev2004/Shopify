@@ -1,0 +1,256 @@
+{% comment %}
+  SumUp Payment Widget Integration
+  
+  This uses SumUp's Payment Widget (embedded) instead of redirect.
+  Creates a checkout and mounts the payment widget on the page.
+  
+  Usage:
+  {% render 'sumup-payment-widget' %}
+  
+  Or with custom backend URL:
+  {% render 'sumup-payment-widget', backend_url: 'https://your-backend-url.com' %}
+{% endcomment %}
+
+{%- liquid
+  assign backend_url = backend_url | default: settings.sumup_backend_url | default: 'https://sumup-shopify-backend.onrender.com'
+-%}
+
+<div id="sumup-payment-widget-container" style="margin: 20px 0;">
+  <div id="sumup-card"></div>
+  <div id="sumup-error-message" style="display: none; margin-top: 15px; padding: 15px; background-color: #fee; border: 1px solid #fcc; border-radius: 4px; color: #c33;"></div>
+</div>
+
+<script src="https://gateway.sumup.com/gateway/ecom/card/v2/sdk.js"></script>
+<script>
+(function() {
+  'use strict';
+  
+  console.log('SumUp: Payment Widget script loaded');
+  
+  const BACKEND_URL = '{{ backend_url }}';
+  let sumupCardInstance = null;
+  let isProcessing = false;
+  
+  // Get checkout total from page
+  function getCheckoutTotal() {
+    const totalSelectors = [
+      '[data-checkout-payment-due-target]',
+      '[data-total-price]',
+      '.total-line__price',
+      '.order-summary__section--total .order-summary__emphasis',
+      '.total-recap__final-price',
+      '.payment-due__price',
+      '.total-line-table__footer .total-line__price'
+    ];
+    
+    for (const selector of totalSelectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        const text = element.textContent || element.innerText;
+        const match = text.match(/[\d,]+\.?\d*/);
+        if (match) {
+          const amount = parseFloat(match[0].replace(/,/g, ''));
+          return Math.round(amount * 100); // Convert to cents
+        }
+      }
+    }
+    
+    // Fallback: try to get from checkout object
+    if (window.Shopify && window.Shopify.checkout) {
+      const total = window.Shopify.checkout.total_price;
+      if (total) {
+        return Math.round(total / 100);
+      }
+    }
+    
+    console.warn('SumUp: Could not find checkout total');
+    return null;
+  }
+  
+  // Get currency
+  function getCurrency() {
+    if (window.Shopify && window.Shopify.checkout) {
+      return window.Shopify.checkout.currency || 'EUR';
+    }
+    return 'EUR';
+  }
+  
+  // Get order ID if available
+  function getOrderId() {
+    if (window.Shopify && window.Shopify.checkout) {
+      return window.Shopify.checkout.order_id || null;
+    }
+    return null;
+  }
+  
+  // Get return URL
+  function getReturnUrl() {
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    return `${protocol}//${hostname}/checkout/thank_you`;
+  }
+  
+  // Show error message
+  function showError(message) {
+    const errorDiv = document.getElementById('sumup-error-message');
+    if (errorDiv) {
+      errorDiv.textContent = message;
+      errorDiv.style.display = 'block';
+      setTimeout(() => {
+        errorDiv.style.display = 'none';
+      }, 10000);
+    }
+    console.error('SumUp Error:', message);
+  }
+  
+  // Hide error message
+  function hideError() {
+    const errorDiv = document.getElementById('sumup-error-message');
+    if (errorDiv) {
+      errorDiv.style.display = 'none';
+    }
+  }
+  
+  // Create checkout and mount widget
+  async function initializePaymentWidget() {
+    if (isProcessing) {
+      return;
+    }
+    
+    isProcessing = true;
+    hideError();
+    
+    try {
+      const amount = getCheckoutTotal();
+      if (!amount || amount <= 0) {
+        throw new Error('Could not determine checkout total. Please refresh and try again.');
+      }
+      
+      const currency = getCurrency();
+      const orderId = getOrderId();
+      const returnUrl = getReturnUrl();
+      
+      console.log('SumUp: Creating checkout for widget:', {
+        amount,
+        currency,
+        orderId,
+        returnUrl
+      });
+      
+      const payload = {
+        amount: amount,
+        currency: currency,
+        description: orderId ? `Shopify Order #${orderId}` : 'Shopify Checkout Payment',
+        order_id: orderId,
+        redirect_url: returnUrl
+      };
+      
+      const response = await fetch(`${BACKEND_URL}/create-checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Server error: ${response.status}`);
+      }
+      
+      if (data.success && data.checkout_id) {
+        console.log('SumUp: Checkout created, mounting widget with ID:', data.checkout_id);
+        
+        // Mount the Payment Widget
+        sumupCardInstance = SumUpCard.mount({
+          id: 'sumup-card',
+          checkoutId: data.checkout_id,
+          amount: (amount / 100).toFixed(2),
+          currency: currency,
+          locale: 'en-GB',
+          showSubmitButton: true,
+          showFooter: true,
+          onResponse: function(type, body) {
+            console.log('SumUp Widget Response - Type:', type);
+            console.log('SumUp Widget Response - Body:', body);
+            
+            if (type === 'success') {
+              // Payment successful
+              console.log('✅ Payment successful!');
+              // Redirect to thank you page
+              window.location.href = returnUrl;
+            } else if (type === 'fail') {
+              // Payment failed
+              console.error('❌ Payment failed:', body);
+              showError('Payment failed. Please try again.');
+              isProcessing = false;
+            } else if (type === 'error') {
+              // Error occurred
+              console.error('❌ Payment error:', body);
+              showError('An error occurred during payment. Please try again.');
+              isProcessing = false;
+            } else if (type === 'invalid') {
+              // Form validation errors
+              console.warn('⚠️ Form validation errors');
+            } else if (type === 'sent') {
+              // Form submitted, processing
+              console.log('⏳ Payment processing...');
+            } else if (type === 'auth-screen') {
+              // 3D Secure authentication
+              console.log('🔐 3D Secure authentication required');
+            }
+          },
+          onLoad: function() {
+            console.log('✅ SumUp Payment Widget loaded');
+            isProcessing = false;
+          },
+          onPaymentMethodsLoad: function(methods) {
+            console.log('Payment methods available:', methods);
+          }
+        });
+        
+      } else {
+        throw new Error(data.error || 'Invalid response from server');
+      }
+      
+    } catch (error) {
+      console.error('SumUp: Error initializing widget:', error);
+      
+      let errorMessage = error.message || 'Failed to initialize payment. Please try again.';
+      
+      if (errorMessage.includes('Unknown client')) {
+        errorMessage = 'Payment service configuration error. Please contact store support.';
+      }
+      
+      showError(errorMessage);
+      isProcessing = false;
+    }
+  }
+  
+  // Initialize when page loads
+  function init() {
+    console.log('SumUp: Initializing payment widget...');
+    
+    // Wait for SumUp SDK to load
+    if (typeof SumUpCard === 'undefined') {
+      console.warn('SumUp: SDK not loaded yet, waiting...');
+      setTimeout(init, 500);
+      return;
+    }
+    
+    // Wait for DOM to be ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializePaymentWidget);
+    } else {
+      // Small delay to ensure checkout total is available
+      setTimeout(initializePaymentWidget, 500);
+    }
+  }
+  
+  // Start initialization
+  init();
+  
+})();
+</script>
+

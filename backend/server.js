@@ -233,7 +233,7 @@ app.post('/create-checkout', async (req, res) => {
       success: true,
       checkout_url: checkout.redirect_uri || checkout.checkout_url,
       checkout_reference: checkout.checkout_reference || checkout.id,
-      checkout_id: checkout.id,
+      checkout_id: checkout.id || checkout.checkout_id, // For Payment Widget
       amount: checkout.amount,
       currency: checkout.currency
     });
