@@ -180,8 +180,11 @@
         throw new Error(data.error || `Server error: ${response.status}`);
       }
       
-      if (data.success && data.checkout_id) {
-        console.log('SumUp: Checkout created, mounting widget with ID:', data.checkout_id);
+      // Check for checkout_id in various possible fields
+      const checkoutId = data.checkout_id || data.id || data.checkoutId;
+      
+      if (data.success && checkoutId) {
+        console.log('SumUp: Checkout created, mounting widget with ID:', checkoutId);
         
         // Hide loading, show widget container
         const loadingDiv = document.getElementById('sumup-loading');
@@ -195,7 +198,7 @@
         // Mount the Payment Widget
         sumupCardInstance = SumUpCard.mount({
           id: 'sumup-card',
-          checkoutId: data.checkout_id,
+          checkoutId: checkoutId,
           amount: (amount / 100).toFixed(2),
           currency: currency,
           locale: 'en-GB',
@@ -248,7 +251,9 @@
         });
         
       } else {
-        throw new Error(data.error || 'Invalid response from server');
+        // Log the full response for debugging
+        console.error('SumUp: Invalid response from backend:', data);
+        throw new Error(data.error || 'Invalid response from server. Missing checkout_id.');
       }
       
     } catch (error) {
