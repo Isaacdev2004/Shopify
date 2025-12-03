@@ -15,10 +15,31 @@
   assign backend_url = backend_url | default: settings.sumup_backend_url | default: 'https://sumup-shopify-backend.onrender.com'
 -%}
 
-<div id="sumup-payment-widget-container" style="margin: 20px 0;">
+<div id="sumup-payment-widget-container" style="margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; background: #fff;">
+  <h3 style="margin-top: 0;">Pay with SumUp</h3>
   <div id="sumup-card"></div>
   <div id="sumup-error-message" style="display: none; margin-top: 15px; padding: 15px; background-color: #fee; border: 1px solid #fcc; border-radius: 4px; color: #c33;"></div>
+  <div id="sumup-loading" style="text-align: center; padding: 20px;">
+    <p>Loading payment form...</p>
+  </div>
 </div>
+
+<style>
+  /* Hide Shopify's default checkout button when SumUp widget is active */
+  #sumup-payment-widget-container:not(:empty) ~ form button[type="submit"],
+  #sumup-payment-widget-container:not(:empty) ~ * form button[type="submit"],
+  #sumup-payment-widget-container:not(:empty) ~ * button[name="complete"],
+  #sumup-payment-widget-container:not(:empty) ~ * [data-complete-order-button] {
+    display: none !important;
+  }
+  
+  /* Also hide if widget container exists */
+  body:has(#sumup-payment-widget-container) form button[type="submit"],
+  body:has(#sumup-payment-widget-container) button[name="complete"],
+  body:has(#sumup-payment-widget-container) [data-complete-order-button] {
+    display: none !important;
+  }
+</style>
 
 <script src="https://gateway.sumup.com/gateway/ecom/card/v2/sdk.js"></script>
 <script>
@@ -162,6 +183,15 @@
       if (data.success && data.checkout_id) {
         console.log('SumUp: Checkout created, mounting widget with ID:', data.checkout_id);
         
+        // Hide loading, show widget container
+        const loadingDiv = document.getElementById('sumup-loading');
+        if (loadingDiv) {
+          loadingDiv.style.display = 'block';
+        }
+        
+        // Ensure Shopify button is hidden
+        hideShopifyCheckout();
+        
         // Mount the Payment Widget
         sumupCardInstance = SumUpCard.mount({
           id: 'sumup-card',
@@ -204,6 +234,13 @@
           onLoad: function() {
             console.log('✅ SumUp Payment Widget loaded');
             isProcessing = false;
+            // Hide loading message
+            const loadingDiv = document.getElementById('sumup-loading');
+            if (loadingDiv) {
+              loadingDiv.style.display = 'none';
+            }
+            // Ensure Shopify button is still hidden
+            hideShopifyCheckout();
           },
           onPaymentMethodsLoad: function(methods) {
             console.log('Payment methods available:', methods);
@@ -228,9 +265,60 @@
     }
   }
   
+  // Hide Shopify checkout button and prevent form submission
+  function hideShopifyCheckout() {
+    // Find and hide Shopify's checkout button
+    const selectors = [
+      'button[type="submit"]',
+      'button[name="complete"]',
+      '[data-complete-order-button]',
+      '.step__footer__continue-btn',
+      '.order-summary__section .btn',
+      'button.btn--primary'
+    ];
+    
+    selectors.forEach(selector => {
+      const buttons = document.querySelectorAll(selector);
+      buttons.forEach(button => {
+        const text = (button.textContent || button.innerText || '').toLowerCase();
+        if (text.includes('complete') || 
+            text.includes('order') || 
+            text.includes('voltooien') || 
+            text.includes('afrekenen') ||
+            text.includes('pay') ||
+            text.includes('betalen')) {
+          console.log('SumUp: Hiding Shopify checkout button');
+          button.style.display = 'none';
+          button.disabled = true;
+        }
+      });
+    });
+    
+    // Prevent form submission
+    const forms = document.querySelectorAll('form');
+    forms.forEach(form => {
+      // Remove existing listeners to avoid duplicates
+      const newForm = form.cloneNode(true);
+      form.parentNode.replaceChild(newForm, form);
+      
+      newForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        console.log('SumUp: Prevented Shopify form submission');
+        return false;
+      }, true);
+    });
+  }
+  
   // Initialize when page loads
   function init() {
     console.log('SumUp: Initializing payment widget...');
+    
+    // Hide Shopify checkout immediately
+    hideShopifyCheckout();
+    // Keep hiding it periodically (in case it's added dynamically)
+    setInterval(hideShopifyCheckout, 1000);
     
     // Wait for SumUp SDK to load
     if (typeof SumUpCard === 'undefined') {
@@ -241,7 +329,10 @@
     
     // Wait for DOM to be ready
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializePaymentWidget);
+      document.addEventListener('DOMContentLoaded', function() {
+        hideShopifyCheckout();
+        setTimeout(initializePaymentWidget, 500);
+      });
     } else {
       // Small delay to ensure checkout total is available
       setTimeout(initializePaymentWidget, 500);
